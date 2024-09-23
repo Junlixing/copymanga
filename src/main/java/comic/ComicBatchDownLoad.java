@@ -8,6 +8,7 @@ import org.openqa.selenium.chrome.ChromeDriver;
 import org.openqa.selenium.chrome.ChromeOptions;
 import org.openqa.selenium.support.ui.ExpectedConditions;
 import org.openqa.selenium.support.ui.WebDriverWait;
+
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.URL;
@@ -18,6 +19,7 @@ import java.nio.file.StandardCopyOption;
 import java.text.MessageFormat;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
@@ -37,13 +39,15 @@ public class ComicBatchDownLoad {
     private static final String chromeDriverPath = Objects.requireNonNull(Paths.get("")).toAbsolutePath() + "\\chromedriver\\chromedriver.exe";
     private static WebDriver driver = null;
     private static String comicWindow = null;
-    private static  WebDriverWait wait = null;
+    private static WebDriverWait wait = null;
     private static final ThreadPoolExecutor threadPoolExecutor = new ThreadPoolExecutor(4, 16, 30, TimeUnit.SECONDS, new ArrayBlockingQueue<>(30), new ThreadPoolExecutor.CallerRunsPolicy());
     private static final List<Future<?>> downloadTaskList = new ArrayList<>();
+    private static final HashMap<String, String> chapterToHref = new HashMap<>();
 
     static {
         System.setProperty("webdriver.chrome.driver", chromeDriverPath);
         ChromeOptions options = new ChromeOptions();
+        options.addArguments("--headless"); // 隐藏浏览器窗口
         driver = new ChromeDriver(options);
         wait = new WebDriverWait(driver, Duration.ofSeconds(10));
     }
@@ -68,30 +72,39 @@ public class ComicBatchDownLoad {
         changeNewestWindow(driver);
         comicWindow = driver.getWindowHandle();
         //遍历所有章节并等待下载完成
+        waitElementCreate(By.className("page-all-item"));
+        List<WebElement> pageElements = driver.findElements(By.className("page-all-item"));
         WebElement all = waitElementCreate(By.id("default全部"));
         List<WebElement> chapterList = all.findElement(By.tagName("ul")).findElements(By.tagName("a"));
-        try {
-            chapterList.forEach(chapter -> {
-                if (!driver.getWindowHandle().equals(comicWindow)) {
-                    driver.close();
-                    driver.switchTo().window(comicWindow);
-                }
-                String href = chapter.getAttribute("href");
-                System.out.println("当前漫画章节链接: " + href);
-                chapter.click();
-                changeNewestWindow(driver);
-                getImageListAndSaveImageList(driver);
-            });
+        System.out.println(chapterList.size());
+        for (int i = 50; i < chapterList.size(); i++) {
+            //换页点击
+            if (i % 50 == 0){
+                Objects.requireNonNull(pageElements.get(i / 50)).click();
+            }
+            WebElement chapter = chapterList.get(i);
+            if (!driver.getWindowHandle().equals(comicWindow)) {
+                driver.close();
+                driver.switchTo().window(comicWindow);
+            }
+            String chapterName = chapter.findElement(By.tagName("li")).getText();
+            String href = chapter.getAttribute("href");
+            System.out.println("当前章节是: " + chapterName +  " 当前漫画章节链接: " + href);
+            chapterToHref.put(chapterName, href);
+            chapter.click();
+            changeNewestWindow(driver);
+            getImageListAndSaveImageList(driver);
+        }
 
+        try {
             downloadTaskList.forEach(downLoadTask -> {
                 try {
                     downLoadTask.get();
-                } catch (InterruptedException | ExecutionException e) {
+                } catch (Exception e) {
                     throw new RuntimeException(e);
                 }
             });
             System.out.println("全部图片下载成功");
-
         } finally {
             threadPoolExecutor.shutdown();
             driver.quit();
@@ -102,6 +115,7 @@ public class ComicBatchDownLoad {
 
     /**
      * 使用等待器等待元素定位器指定的元素出现
+     *
      * @param locator 元素定位器
      * @return 元素定位器定位到的WebElement
      */
@@ -111,6 +125,7 @@ public class ComicBatchDownLoad {
 
     /**
      * 切换到最新的窗口
+     *
      * @param driver 浏览器
      */
     private static void changeNewestWindow(WebDriver driver) {
@@ -125,6 +140,7 @@ public class ComicBatchDownLoad {
 
     /**
      * 通过滚动的方式获取所有图片并下载
+     *
      * @param driver 浏览器
      */
     private static void getImageListAndSaveImageList(WebDriver driver) {
@@ -183,6 +199,7 @@ public class ComicBatchDownLoad {
 
     /**
      * 获取当前页面漫画的总页数
+     *
      * @param driver 浏览器
      * @return 总页数
      */
@@ -205,7 +222,8 @@ public class ComicBatchDownLoad {
 
     /**
      * 下载图片
-     * @param imgUrl 图片地址
+     *
+     * @param imgUrl   图片地址
      * @param savePath 保存地址
      * @param fileName 文件名
      * @throws IOException
