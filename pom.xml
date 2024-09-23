@@ -16,7 +16,6 @@
 
     <dependencies>
         <dependency>
-            <!-- jsoup HTML parser library @ http://jsoup.org/ -->
             <groupId>org.jsoup</groupId>
             <artifactId>jsoup</artifactId>
             <version>1.10.2</version>
@@ -28,8 +27,6 @@
             <version>4.24.0</version>
         </dependency>
 
-
-        <!-- WebDriver Manager (自动管理浏览器驱动) -->
         <dependency>
             <groupId>io.github.bonigarcia</groupId>
             <artifactId>webdrivermanager</artifactId>
@@ -50,7 +47,6 @@
                     </descriptorRefs>
                     <archive>
                         <manifest>
-                            <!-- 可以设置jar包的入口类(可选) -->
                             <mainClass>comic.ComicBatchDownLoad</mainClass>
                         </manifest>
                     </archive>

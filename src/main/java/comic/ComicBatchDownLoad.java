@@ -15,8 +15,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
+import java.text.MessageFormat;
 import java.time.Duration;
-import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -32,12 +32,21 @@ import java.util.concurrent.TimeUnit;
 
 public class ComicBatchDownLoad {
 
-    private static final String prefix = "https://www.copymanga.tv";
-    private static final String chromeDriverPath = Objects.requireNonNull(Paths.get("")).toAbsolutePath() + "\\chromedriver\\chromedriver.exe";
-    private static String comicWindow = null;
-    private static final ThreadPoolExecutor threadPoolExecutor = new ThreadPoolExecutor(8, 16, 30, TimeUnit.SECONDS, new ArrayBlockingQueue<>(30), new ThreadPoolExecutor.CallerRunsPolicy());
-    private static final List<Future<?>> downloadTaskList = new ArrayList<>();
+    private static final String targetLinkTemplate = "https://www.copymanga.tv/search?q={0}&q_type={1}";
     private static final String downloadImageDirectory = "image";
+    private static final String chromeDriverPath = Objects.requireNonNull(Paths.get("")).toAbsolutePath() + "\\chromedriver\\chromedriver.exe";
+    private static WebDriver driver = null;
+    private static String comicWindow = null;
+    private static  WebDriverWait wait = null;
+    private static final ThreadPoolExecutor threadPoolExecutor = new ThreadPoolExecutor(4, 16, 30, TimeUnit.SECONDS, new ArrayBlockingQueue<>(30), new ThreadPoolExecutor.CallerRunsPolicy());
+    private static final List<Future<?>> downloadTaskList = new ArrayList<>();
+
+    static {
+        System.setProperty("webdriver.chrome.driver", chromeDriverPath);
+        ChromeOptions options = new ChromeOptions();
+        driver = new ChromeDriver(options);
+        wait = new WebDriverWait(driver, Duration.ofSeconds(10));
+    }
 
     public static void main(String[] args) {
         Scanner scanner = new Scanner(System.in);
@@ -48,22 +57,18 @@ public class ComicBatchDownLoad {
         scanner.close();
 
         long start = System.currentTimeMillis();
-        String url = prefix + "/search?q=" + comicName + "&q_type=" + comicType;
-        System.setProperty("webdriver.chrome.driver", chromeDriverPath);
-        ChromeOptions options = new ChromeOptions();
-        WebDriver driver = new ChromeDriver(options);
-        driver.get(url);
-        //找到漫画并切换
-        WebElement element = driver.findElement(By.className("exemptComicItem-txt-box"));
-        WebElement comicElement = element.findElement(By.tagName("a"));
-        String comicUri = comicElement.getAttribute("href");
-        WebElement comicTitleElement = comicElement.findElement(By.tagName("p"));
-        String comicTitle = comicTitleElement.getText();
+        driver.get(MessageFormat.format(targetLinkTemplate, comicName, comicType));
+        //找到主漫画并切换,默认只取第一个漫画
+        WebElement comicElement = waitElementCreate(By.className("exemptComicItem-txt-box")).findElement(By.tagName("a"));
+        String comicUri = waitElementCreate(By.className("exemptComicItem-txt-box")).findElement(By.tagName("a")).getAttribute("href");
+        System.out.println("当前漫画链接:  " + comicUri);
+        String comicTitle = comicElement.findElement(By.tagName("p")).getText();
+        System.out.println("当前漫画标题:  " + comicTitle);
         comicElement.click();
         changeNewestWindow(driver);
         comicWindow = driver.getWindowHandle();
-        WebDriverWait wait = new WebDriverWait(driver, Duration.ofSeconds(10));
-        WebElement all = wait.until(ExpectedConditions.visibilityOfElementLocated(By.id("default全部")));
+        //遍历所有章节并等待下载完成
+        WebElement all = waitElementCreate(By.id("default全部"));
         List<WebElement> chapterList = all.findElement(By.tagName("ul")).findElements(By.tagName("a"));
         try {
             chapterList.forEach(chapter -> {
@@ -91,8 +96,17 @@ public class ComicBatchDownLoad {
             threadPoolExecutor.shutdown();
             driver.quit();
             long end = System.currentTimeMillis();
-            System.out.println("花费时间是: " + (end - start));
+            System.out.println("花费时间是: " + (end - start) + "毫秒");
         }
+    }
+
+    /**
+     * 使用等待器等待元素定位器指定的元素出现
+     * @param locator 元素定位器
+     * @return 元素定位器定位到的WebElement
+     */
+    private static WebElement waitElementCreate(By locator) {
+        return wait.until(ExpectedConditions.visibilityOfElementLocated(locator));
     }
 
     /**
@@ -121,13 +135,12 @@ public class ComicBatchDownLoad {
             int scrollPosition = 0;
             int scrollStep = 250;
             int maxPage = getMaxPage(driver);
-            WebDriverWait wait = new WebDriverWait(driver, Duration.of(10, ChronoUnit.SECONDS));
             while (true) {
                 //滚动页面
                 js.executeScript("window.scrollBy(0, " + scrollStep + ");");
                 scrollPosition += scrollStep;
 
-                wait.until(ExpectedConditions.presenceOfElementLocated(By.cssSelector("img.lazyloaded")));
+                waitElementCreate(By.cssSelector("img.lazyloaded"));
                 List<WebElement> lazyImages = driver.findElements(By.cssSelector("img.lazyloaded"));
                 for (WebElement image : lazyImages) {
                     String imageUrl = image.getAttribute("src");
@@ -158,8 +171,9 @@ public class ComicBatchDownLoad {
             String[] comicTitle = title.split("/");
             String path = Paths.get("").toAbsolutePath() + "\\" + downloadImageDirectory + "\\" + comicTitle[0] + "\\" + comicTitle[1];
             List<WebElement> elements = driver.findElements(By.tagName("li"));
-            List<String> imgUrlList = elements.stream().map(webElement -> webElement.findElement(By.tagName("img")).getAttribute("src")).toList();
-
+            List<String> imgUrlList = elements.stream()
+                    .map(webElement -> webElement.findElement(By.tagName("img")).getAttribute("src"))
+                    .toList();
             Future<?> downloadTask = threadPoolExecutor.submit(new DownloadImgTask(Paths.get(path), imgUrlList));
             downloadTaskList.add(downloadTask);
         } catch (RuntimeException e) {
@@ -173,9 +187,7 @@ public class ComicBatchDownLoad {
      * @return 总页数
      */
     private static Integer getMaxPage(WebDriver driver) {
-        WebDriverWait wait = new WebDriverWait(driver, Duration.ofSeconds(10));
-        WebElement element = wait.until(ExpectedConditions.visibilityOfElementLocated(By.className("comicCount")));
-        return Integer.valueOf(element.getText());
+        return Integer.valueOf(waitElementCreate(By.className("comicCount")).getText());
     }
 
     private static Integer getMaxNum(WebDriver driver) {
